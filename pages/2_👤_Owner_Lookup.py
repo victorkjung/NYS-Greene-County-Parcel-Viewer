@@ -5,7 +5,7 @@ Owner Lookup - Detailed owner research and portfolio analysis
 import streamlit as st
 import pandas as pd
 import folium
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 from pathlib import Path
 
 st.set_page_config(
@@ -115,6 +115,11 @@ def create_owner_map(parcels_df):
     return m
 
 
+def render_folium_map(m, height=400):
+    """Render a Folium map without custom Streamlit components."""
+    components.html(m.get_root().render(), height=height, width=None, scrolling=False)
+
+
 def main():
     st.title("👤 Owner Lookup")
     st.markdown("*Search and analyze property portfolios by owner*")
@@ -195,7 +200,7 @@ def main():
             with col1:
                 st.markdown("##### 🗺️ Property Locations")
                 m = create_owner_map(owner_parcels)
-                st_folium(m, width=None, height=400)
+                render_folium_map(m, height=400)
             
             with col2:
                 st.markdown("##### 📬 Mailing Address")
