@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import folium
 from folium.plugins import Draw, MousePosition, Fullscreen, LocateControl
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 import json
 from pathlib import Path
 import random
@@ -508,6 +508,11 @@ def create_map(df, selected_parcel=None, show_labels=True, map_style="satellite"
     return m
 
 
+def render_folium_map(m, height=600):
+    """Render a Folium map without custom Streamlit components."""
+    components.html(m.get_root().render(), height=height, width=None, scrolling=False)
+
+
 def display_property_details(parcel):
     """Display detailed property information"""
     st.markdown(f"""
@@ -753,17 +758,11 @@ def main():
                 tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
                 attr="Esri"
             )
-            st_folium(m, width=None, height=600)
+            render_folium_map(m, height=600)
         else:
             # Create and display map
             m = create_map(filtered_df, show_labels=show_labels, map_style=map_style)
-            map_data = st_folium(m, width=None, height=600, returned_objects=["last_object_clicked"])
-            
-            # Handle map clicks
-            if map_data and map_data.get("last_object_clicked"):
-                clicked_lat = map_data["last_object_clicked"].get("lat")
-                clicked_lng = map_data["last_object_clicked"].get("lng")
-                st.session_state['clicked_location'] = (clicked_lat, clicked_lng)
+            render_folium_map(m, height=600)
     
     with details_col:
         st.markdown("### 📋 Property Details")
@@ -796,7 +795,7 @@ def main():
                     mime="application/json"
                 )
         else:
-            st.info("👆 Click on a parcel in the map or select an owner above to view details.")
+            st.info("👆 Select an owner above to view details.")
     
     # Search results table
     with st.expander("📊 Search Results Table", expanded=False):
