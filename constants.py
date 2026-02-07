@@ -10,6 +10,9 @@ DEFAULT_LAT = 42.1856
 DEFAULT_LON = -74.2848
 DEFAULT_ZOOM = 14
 
+# Default dataset file used by the app
+DEFAULT_DATA_FILE = "data/zip_12450_parcels.json"
+
 # Map settings
 MAP_STYLES = {
     "satellite": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",

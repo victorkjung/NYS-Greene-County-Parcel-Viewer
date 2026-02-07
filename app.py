@@ -12,6 +12,7 @@ import streamlit.components.v1 as components
 import json
 from pathlib import Path
 import random
+from constants import DEFAULT_DATA_FILE
 
 # Page configuration
 st.set_page_config(
@@ -156,13 +157,13 @@ def load_parcel_data(num_parcels: int = 500):
     """Load parcel data from cache file or generate sample data for Lanesville, NY
     
     Priority:
-    1. Load from cached real NYS data (data/lanesville_parcels.json)
+    1. Load from cached real NYS data (data/zip_12450_parcels.json)
     2. Generate sample data if no cache exists
     
     Args:
         num_parcels: Number of sample parcels to generate if no data file exists
     """
-    data_file = Path("data/lanesville_parcels.json")
+    data_file = Path(DEFAULT_DATA_FILE)
     
     # Try to load real data first
     if data_file.exists():
@@ -606,22 +607,30 @@ def main():
             filtered_df = filtered_df[filtered_df['property_class_desc'].isin(selected_classes)]
         
         # Acreage filter
+        max_acres_val = float(df['acreage'].max()) if not df.empty else 0.0
+        if not np.isfinite(max_acres_val) or max_acres_val <= 0:
+            max_acres_val = 1.0
+        acres_step = 0.5 if max_acres_val >= 0.5 else 0.1
         min_acres, max_acres = st.slider(
             "Acreage Range:",
             min_value=0.0,
-            max_value=float(df['acreage'].max()),
-            value=(0.0, float(df['acreage'].max())),
-            step=0.5
+            max_value=max_acres_val,
+            value=(0.0, max_acres_val),
+            step=acres_step
         )
         filtered_df = filtered_df[(filtered_df['acreage'] >= min_acres) & (filtered_df['acreage'] <= max_acres)]
         
         # Value filter
+        max_value_val = int(df['assessed_value'].max()) if not df.empty else 0
+        if not np.isfinite(max_value_val) or max_value_val <= 0:
+            max_value_val = 10000
+        value_step = 10000 if max_value_val >= 10000 else max(1, max_value_val // 10)
         min_value, max_value = st.slider(
             "Assessed Value Range:",
             min_value=0,
-            max_value=int(df['assessed_value'].max()),
-            value=(0, int(df['assessed_value'].max())),
-            step=10000,
+            max_value=max_value_val,
+            value=(0, max_value_val),
+            step=value_step,
             format="$%d"
         )
         filtered_df = filtered_df[(filtered_df['assessed_value'] >= min_value) & (filtered_df['assessed_value'] <= max_value)]
@@ -671,7 +680,7 @@ def main():
         st.markdown("### ⚙️ Data Settings")
         
         # Check data source
-        data_file = Path("data/lanesville_parcels.json")
+        data_file = Path(DEFAULT_DATA_FILE)
         if data_file.exists():
             try:
                 with open(data_file, "r") as f:
@@ -716,10 +725,13 @@ def main():
         # Quick zip code filter
         st.markdown("### 📮 Filter by Zip Code")
         available_zips = df['mailing_zip'].unique().tolist()
+        zip_options = ["All"] + sorted([str(z) for z in available_zips])
+        default_zip = "12450"
+        default_index = zip_options.index(default_zip) if default_zip in zip_options else 0
         selected_zip = st.selectbox(
             "Mailing Zip Code:",
-            options=["All"] + sorted([str(z) for z in available_zips]),
-            index=0
+            options=zip_options,
+            index=default_index
         )
         
         if selected_zip != "All":

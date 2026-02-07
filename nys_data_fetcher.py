@@ -7,6 +7,7 @@ import requests
 import pandas as pd
 import json
 from pathlib import Path
+from constants import DEFAULT_DATA_FILE
 from typing import Optional, Dict, List
 import time
 
@@ -340,7 +341,7 @@ class NYSParcelFetcher:
         
         return pd.DataFrame(records)
     
-    def save_to_cache(self, df: pd.DataFrame, filename: str = "lanesville_parcels.json"):
+    def save_to_cache(self, df: pd.DataFrame, filename: str = DEFAULT_DATA_FILE.split("/")[-1]):
         """Save DataFrame to cache file"""
         output_path = self.cache_dir / filename
         
@@ -352,7 +353,7 @@ class NYSParcelFetcher:
         print(f"Saved {len(records)} parcels to {output_path}")
         return output_path
     
-    def load_from_cache(self, filename: str = "lanesville_parcels.json") -> Optional[pd.DataFrame]:
+    def load_from_cache(self, filename: str = DEFAULT_DATA_FILE.split("/")[-1]) -> Optional[pd.DataFrame]:
         """Load DataFrame from cache file"""
         cache_path = self.cache_dir / filename
         

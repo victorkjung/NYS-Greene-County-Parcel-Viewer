@@ -8,6 +8,7 @@ Total Records: ~38,370 parcels
 
 import requests
 import pandas as pd
+from constants import DEFAULT_DATA_FILE
 import json
 from pathlib import Path
 from typing import Optional, Callable
@@ -518,7 +519,7 @@ def fetch_greene_county_data(
         save_to_file(df, cache_file)
         
         # Also save as the default file the app looks for
-        save_to_file(df, "lanesville_parcels.json")
+        save_to_file(df, DEFAULT_DATA_FILE.split("/")[-1])
         
         return df
     
@@ -598,7 +599,7 @@ if __name__ == "__main__":
             print(f"Data saved to: data/{municipality.lower()}_parcels.json")
         else:
             print("Data saved to: data/greene_county_parcels.json")
-        print("              data/lanesville_parcels.json")
+        print(f"              {DEFAULT_DATA_FILE}")
         print()
         print("Usage examples:")
         print("  python greene_county_fetcher.py                    # All parcels")

@@ -8,6 +8,7 @@ import json
 import pandas as pd
 import geopandas as gpd
 from pathlib import Path
+from constants import DEFAULT_DATA_FILE
 from shapely.geometry import shape, mapping
 import logging
 
@@ -171,7 +172,7 @@ class GreeneCountyParcelLoader:
         
         return pd.DataFrame(records)
     
-    def save_processed_data(self, df: pd.DataFrame, filename: str = "lanesville_parcels.json"):
+    def save_processed_data(self, df: pd.DataFrame, filename: str = DEFAULT_DATA_FILE.split("/")[-1]):
         """Save processed parcel data to JSON for the app."""
         output_path = self.data_dir / filename
         
