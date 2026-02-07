@@ -23,6 +23,7 @@ from greene_county_fetcher import (
     GREENE_COUNTY_API,
     PROPERTY_CLASS_DESC
 )
+from constants import DEFAULT_DATA_FILE
 
 st.set_page_config(
     page_title="Data Management | Lanesville Property Finder",
@@ -409,7 +410,7 @@ def main():
                     with col2:
                         if st.button("💾 Save as Main Dataset"):
                             # Save as the main file the app uses
-                            output_path = Path("data") / "lanesville_parcels.json"
+                            output_path = Path(DEFAULT_DATA_FILE)
                             output_path.parent.mkdir(exist_ok=True)
                             
                             with open(output_path, "w") as f:
@@ -451,7 +452,7 @@ def main():
         
         # Quick stats if data is loaded
         cache_files = get_cache_info()
-        main_cache = next((cf for cf in cache_files if cf['filename'] == 'lanesville_parcels.json'), None)
+        main_cache = next((cf for cf in cache_files if cf['filename'] == Path(DEFAULT_DATA_FILE).name), None)
         
         if main_cache:
             st.markdown("### 📊 Current Dataset")
