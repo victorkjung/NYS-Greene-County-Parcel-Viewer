@@ -1,12 +1,11 @@
 """
-Data Loader for Lanesville Property Finder
+Data Loader for Greene County Property Finder
 Utilities for loading real parcel data from official NYS/Greene County sources
 
-VERSION 2.0 - IMPROVEMENTS:
-- Added caching with st.cache_data decorator support
+VERSION 3.0 - CLEANUP:
+- Removed sample data fallback
 - Better error handling
-- Progress indicators
-- Retry logic for API calls
+- Clear error messages about data availability
 """
 
 import requests
@@ -14,7 +13,6 @@ import json
 import pandas as pd
 import geopandas as gpd
 from pathlib import Path
-from functools import lru_cache
 from constants import DEFAULT_DATA_FILE
 from shapely.geometry import shape, mapping
 import logging
@@ -24,259 +22,194 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# Cache for API responses
-@lru_cache(maxsize=5)
-def cached_fetch(url: str, params_hash: str) -> dict:
-    """
-    Simple in-memory cache for API calls.
-    """
-    pass  # Implementation in loader class
-
-
 class GreeneCountyParcelLoader:
     """
     Load parcel data from Greene County and NYS GIS sources.
     
-    Official data sources:
-    - NYS GIS Clearinghouse: https://gis.ny.gov/
-    - Greene County Real Property Tax Services
-    - NYS Tax Parcel Centroids and Polygons
+    NOTE: Greene County parcel polygons are NOT available in the public NYS GIS API.
+    Only the county boundary footprint is available.
+    
+    Alternative data sources to explore:
+    - Contact Greene County Real Property directly
+    - Use NYS Assessment Lookup (single parcel at a time)
+    - Greene County GIS: gis.gcgovny.com
     """
     
-    # NYS GIS REST Service endpoints - UPDATED 2025
-    # Official NYS GIS parcel service
+    # NYS GIS REST Service endpoints
     NYS_PARCEL_SERVICE = "https://gisservices.its.ny.gov/arcgis/rest/services/NYS_Tax_Parcels_Public/MapServer"
     
-    # Greene County FIPS code: 39
-    GREENE_COUNTY_FIPS = "039"
-    
-    # Town of Hunter code (where Lanesville is located)
-    HUNTER_TOWN_CODE = "040"  # Example - verify with county
-    
-    # Lanesville approximate bounding box
-    LANESVILLE_BBOX = {
-        "min_lon": -74.35,
-        "max_lon": -74.22,
-        "min_lat": 42.14,
-        "max_lat": 42.22
-    }
+    # Layer IDs
+    LAYER_PARCELS = 1  # Actual parcel polygons
+    LAYER_FOOTPRINT = 0  # County boundaries only
     
     def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)
         
-    def fetch_nys_parcels(self, bbox: dict = None, progress_callback=None) -> gpd.GeoDataFrame:
+    def check_data_availability(self) -> dict:
         """
-        Fetch parcel data from NYS GIS services.
-        
-        Note: The actual endpoint and parameters may need to be adjusted
-        based on the current NYS GIS service configuration.
-        
-        IMPROVEMENTS v2.0:
-        - Added progress callbacks
-        - Added retry logic
-        - Better error handling
+        Check what counties are available in the public API.
+        Returns dict with availability info.
         """
-        bbox = bbox or self.LANESVILLE_BBOX
+        try:
+            # Check the footprint layer to see what counties have data
+            url = f"{self.NYS_PARCEL_SERVICE}/{self.LAYER_FOOTPRINT}/query"
+            params = {
+                "where": "1=1",
+                "outFields": "NAME,FIPS_CODE",
+                "returnGeometry": "false",
+                "f": "json"
+            }
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            counties = []
+            if 'features' in data:
+                for f in data['features']:
+                    counties.append(f['attributes'])
+            
+            # Check if Greene is in the public parcels (layer 1)
+            url_parcels = f"{self.NYS_PARCEL_SERVICE}/{self.LAYER_PARCELS}/query"
+            params_parcels = {
+                "where": "COUNTY_NAME='GREENE'",
+                "outFields": "COUNTY_NAME",
+                "returnGeometry": "false",
+                "resultRecordCount": 1,
+                "f": "json"
+            }
+            
+            try:
+                response = requests.get(url_parcels, params=params_parcels, timeout=30)
+                greene_available = 'features' in response.json() and len(response.json().get('features', [])) > 0
+            except:
+                greene_available = False
+            
+            return {
+                "available": greene_available,
+                "counties": counties,
+                "message": "Greene County parcel data IS available in public API" if greene_available else "Greene County parcel data is NOT available in public API. Contact county directly."
+            }
+            
+        except Exception as e:
+            return {
+                "available": False,
+                "counties": [],
+                "message": f"Error checking availability: {str(e)}"
+            }
+    
+    def fetch_parcels(self, county: str = "GREENE", municipality: str = None, limit: int = 1000) -> pd.DataFrame:
+        """
+        Fetch parcel data from NYS GIS.
         
-        # NYS Tax Parcel service (example endpoint - verify current URL)
-        url = f"{self.NYS_PARCEL_SERVICE}/NYS_Tax_Parcels_Public/FeatureServer/0/query"
+        NOTE: This will likely fail for Greene County since parcels aren't in the public API.
+        """
+        url = f"{self.NYS_PARCEL_SERVICE}/{self.LAYER_PARCELS}/query"
+        
+        where_clause = f"COUNTY_NAME='{county.upper()}'"
+        if municipality:
+            where_clause += f" AND (MUNI_NAME='{municipality}' OR CITYTOWN_NAME='{municipality}')"
         
         params = {
-            "where": f"COUNTY_NAME='Greene'",
-            "geometry": f"{bbox['min_lon']},{bbox['min_lat']},{bbox['max_lon']},{bbox['max_lat']}",
-            "geometryType": "esriGeometryEnvelope",
-            "spatialRel": "esriSpatialRelIntersects",
+            "where": where_clause,
             "outFields": "*",
             "returnGeometry": "true",
-            "f": "geojson"
+            "resultRecordCount": limit,
+            "f": "json"
         }
         
-        # Retry logic
-        max_retries = 3
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
-            try:
-                if progress_callback:
-                    progress_callback(f"Fetching parcels from NYS GIS... (attempt {attempt + 1}/{max_retries})")
-                
-                logger.info(f"Fetching parcels from NYS GIS...")
-                response = requests.get(url, params=params, timeout=60)
-                response.raise_for_status()
-                
-                geojson = response.json()
-                gdf = gpd.GeoDataFrame.from_features(geojson['features'])
-                gdf.set_crs(epsg=4326, inplace=True)
-                
-                logger.info(f"Retrieved {len(gdf)} parcels")
-                return gdf
-                
-            except requests.RequestException as e:
-                logger.error(f"Error fetching NYS parcel data (attempt {attempt + 1}): {e}")
-                if attempt < max_retries - 1:
-                    if progress_callback:
-                        progress_callback(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                else:
-                    logger.error(f"Failed after {max_retries} attempts")
-                    return None
-            except Exception as e:
-                logger.error(f"Unexpected error: {e}")
-                return None
-    
-    def load_shapefile(self, shapefile_path: str) -> gpd.GeoDataFrame:
-        """
-        Load parcel data from a local shapefile.
-        
-        Greene County may provide parcel shapefiles for download.
-        """
         try:
-            gdf = gpd.read_file(shapefile_path)
+            logger.info(f"Fetching parcels for {county}...")
+            response = requests.get(url, params=params, timeout=60)
+            response.raise_for_status()
             
-            # Reproject to WGS84 if needed
-            if gdf.crs and gdf.crs.to_epsg() != 4326:
-                gdf = gdf.to_crs(epsg=4326)
+            data = response.json()
             
-            logger.info(f"Loaded {len(gdf)} parcels from shapefile")
-            return gdf
+            if 'error' in data:
+                raise Exception(f"API Error: {data['error'].get('message', 'Unknown error')}")
+            
+            if 'features' not in data or len(data['features']) == 0:
+                raise Exception(f"No parcels found for {county}. Greene County parcel data is not available in the public NYS GIS API.")
+            
+            # Process features into DataFrame
+            records = []
+            for feature in data['features']:
+                props = feature['attributes']
+                record = {
+                    'parcel_id': props.get('PRINT_KEY', ''),
+                    'sbl': props.get('SBL', ''),
+                    'owner': props.get('OWNER_NAME1', props.get('PRIMARY_OWNER', '')),
+                    'mailing_address': props.get('MAIL_ADDR', ''),
+                    'property_class': props.get('PROP_CLASS', ''),
+                    'assessed_value': props.get('TOTAL_AV', 0),
+                    'land_value': props.get('LAND_AV', 0),
+                    'acreage': props.get('ACRES', 0),
+                    'municipality': props.get('MUNI_NAME', props.get('CITYTOWN_NAME', '')),
+                    'address': props.get('PARCEL_ADDR', ''),
+                }
+                records.append(record)
+            
+            return pd.DataFrame(records)
+            
+        except requests.RequestException as e:
+            raise Exception(f"Network error fetching parcels: {str(e)}")
+    
+    def fetch_assessment_lookup(self, x: float, y: float) -> dict:
+        """
+        Use NYS Assessment Lookup to get parcel data for a specific coordinate.
+        This works for any location in NYS!
+        """
+        url = "https://gisservices.its.ny.gov/arcgis/rest/services/NYSTaxAssessmentLookup/GPServer/TaxAssessment/execute"
+        
+        params = {
+            "X": str(x),
+            "Y": str(y),
+            "f": "json"
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'results' in data and len(data['results']) > 0:
+                return data['results'][0]['value']
+            return {}
             
         except Exception as e:
-            logger.error(f"Error loading shapefile: {e}")
-            return None
+            logger.error(f"Assessment lookup error: {e}")
+            return {}
     
-    def load_assessment_roll(self, csv_path: str) -> pd.DataFrame:
-        """
-        Load assessment roll data from CSV.
+    def load_local_data(self, filename: str = None) -> pd.DataFrame:
+        """Load previously downloaded/parced data from local files."""
+        filename = filename or DEFAULT_DATA_FILE
+        filepath = self.data_dir / filename
         
-        Greene County provides annual assessment rolls that can be joined
-        with parcel geometry data.
-        """
-        try:
-            df = pd.read_csv(csv_path)
-            logger.info(f"Loaded {len(df)} assessment records")
-            return df
-        except Exception as e:
-            logger.error(f"Error loading assessment roll: {e}")
-            return None
-    
-    def process_parcels(self, gdf: gpd.GeoDataFrame) -> pd.DataFrame:
-        """
-        Process GeoDataFrame to standard format for the app.
-        """
-        records = []
+        if not filepath.exists():
+            raise FileNotFoundError(f"Local data file not found: {filepath}")
         
-        for idx, row in gdf.iterrows():
-            # Extract centroid for marker placement
-            centroid = row.geometry.centroid
-            
-            # Get exterior coordinates for polygon display
-            if row.geometry.geom_type == 'Polygon':
-                coords = [list(c)[::-1] for c in row.geometry.exterior.coords]
-            elif row.geometry.geom_type == 'MultiPolygon':
-                # Use the largest polygon
-                largest = max(row.geometry.geoms, key=lambda x: x.area)
-                coords = [list(c)[::-1] for c in largest.exterior.coords]
-            else:
-                coords = [[centroid.y, centroid.x]]
-            
-            # Map fields (adjust based on actual field names in source data)
-            record = {
-                "parcel_id": row.get('PRINT_KEY', row.get('SBL', f'PARCEL_{idx}')),
-                "sbl": row.get('SBL', row.get('SWIS_PRINT_KEY', '')),
-                "owner": row.get('OWNER_NAME', row.get('NAME', 'Unknown')),
-                "mailing_address": row.get('MAIL_ADDR', row.get('ADDRESS', '')),
-                "mailing_city": row.get('MAIL_CITY', row.get('PO', '')),
-                "mailing_state": row.get('MAIL_STATE', 'NY'),
-                "mailing_zip": str(row.get('MAIL_ZIP', row.get('ZIP', ''))),
-                "property_class": str(row.get('PROP_CLASS', row.get('LAND_USE', '999'))),
-                "property_class_desc": row.get('CLASS_DESC', row.get('LAND_USE_DESC', 'Unknown')),
-                "acreage": float(row.get('CALC_ACRES', row.get('ACRES', 0))),
-                "assessed_value": int(row.get('TOTAL_AV', row.get('ASSESSED_VALUE', 0))),
-                "land_value": int(row.get('LAND_AV', 0)),
-                "improvement_value": int(row.get('IMPR_AV', 0)),
-                "tax_year": int(row.get('TAX_YEAR', 2024)),
-                "annual_taxes": float(row.get('TAX_AMT', 0)),
-                "school_district": row.get('SCHOOL_NAME', 'Unknown'),
-                "municipality": row.get('MUNI_NAME', row.get('CITY', 'Hunter')),
-                "county": "Greene",
-                "latitude": centroid.y,
-                "longitude": centroid.x,
-                "coordinates": coords[:50],  # Limit coordinate points for performance
-                "deed_book": str(row.get('DEED_BOOK', '')),
-                "deed_page": str(row.get('DEED_PAGE', '')),
-                "last_sale_date": row.get('SALE_DATE', ''),
-                "last_sale_price": row.get('SALE_PRICE', None)
-            }
-            records.append(record)
+        with open(filepath, 'r') as f:
+            data = json.load(f)
         
-        return pd.DataFrame(records)
-    
-    def save_processed_data(self, df: pd.DataFrame, filename: str = DEFAULT_DATA_FILE.split("/")[-1]):
-        """Save processed parcel data to JSON for the app."""
-        output_path = self.data_dir / filename
-        
-        # Convert to JSON-serializable format
-        records = df.to_dict(orient='records')
-        
-        with open(output_path, 'w') as f:
-            json.dump(records, f, indent=2, default=str)
-        
-        logger.info(f"Saved {len(records)} parcels to {output_path}")
-        return output_path
-    
-    def filter_lanesville(self, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-        """
-        Filter parcels to Lanesville area using bounding box.
-        """
-        bbox = self.LANESVILLE_BBOX
-        
-        # Create bounding box filter
-        filtered = gdf.cx[
-            bbox['min_lon']:bbox['max_lon'],
-            bbox['min_lat']:bbox['max_lat']
-        ]
-        
-        logger.info(f"Filtered to {len(filtered)} parcels in Lanesville area")
-        return filtered
+        return pd.DataFrame(data)
 
 
-def download_and_process():
+def get_sample_data() -> pd.DataFrame:
     """
-    Main function to download and process parcel data.
-    
-    Usage:
-        python data_loader.py
-    
-    Or in Python:
-        from data_loader import download_and_process
-        download_and_process()
+    DEPRECATED: Sample data removed.
+    Use fetch_parcels() or fetch_assessment_lookup() instead.
     """
-    loader = GreeneCountyParcelLoader()
-    
-    # Try to fetch from NYS GIS
-    gdf = loader.fetch_nys_parcels()
-    
-    if gdf is not None and len(gdf) > 0:
-        # Filter to Lanesville area
-        gdf_filtered = loader.filter_lanesville(gdf)
-        
-        # Process to standard format
-        df = loader.process_parcels(gdf_filtered)
-        
-        # Save for app use
-        loader.save_processed_data(df)
-        
-        print(f"✅ Successfully processed {len(df)} parcels")
-        return df
-    else:
-        print("⚠️ Could not fetch data from NYS GIS. Using sample data.")
-        print("\nTo use real data, you can:")
-        print("1. Download parcel shapefiles from Greene County GIS")
-        print("2. Download from NYS GIS Clearinghouse: https://gis.ny.gov/")
-        print("3. Request data from Greene County Real Property office")
-        return None
+    raise NotImplementedError(
+        "Sample data has been removed. "
+        " Greene County parcel data is not available in the public NYS GIS API. "
+        " Options: 1) Contact Greene County directly, 2) Use Assessment Lookup for single parcels, "
+        "3) Use a different county that's available in the API"
+    )
 
 
 if __name__ == "__main__":
-    download_and_process()
+    # Test availability
+    loader = GreeneCountyParcelLoader()
+    status = loader.check_data_availability()
+    print(f" Greene County available: {status['available']}")
+    print(f"Message: {status['message']}")
