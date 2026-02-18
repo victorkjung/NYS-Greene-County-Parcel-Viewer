@@ -194,18 +194,6 @@ class GreeneCountyParcelLoader:
         return pd.DataFrame(data)
 
 
-def get_sample_data() -> pd.DataFrame:
-    """
-    DEPRECATED: Sample data removed.
-    Use fetch_parcels() or fetch_assessment_lookup() instead.
-    """
-    raise NotImplementedError(
-        "Sample data has been removed. "
-        " Greene County parcel data is not available in the public NYS GIS API. "
-        " Options: 1) Contact Greene County directly, 2) Use Assessment Lookup for single parcels, "
-        "3) Use a different county that's available in the API"
-    )
-
 
 if __name__ == "__main__":
     # Test availability
